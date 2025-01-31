@@ -1,0 +1,38 @@
+global:
+  batch_size: 1000
+  sleep: 1s
+  datasource:
+    transaction_isolation: rr
+    src:
+      addr: 127.0.0.1:3306
+      user: root
+      pass: "1234"
+      dbname: mydb
+    dst:
+      addr: 127.0.0.1:3306
+      user: root
+      pass: "1234"
+      dbname: mydb
+rules:
+  - table: user_logs
+    where: project = "A" and user_type = "VIP"
+    pk: id
+  - table: orders
+    where: isdeleted = 1 and creationtime < '2022-1-1'
+    pk: id
+    deps:
+      - table: order_details
+        key: order_id
+      - table: order_expressinfo
+        key: order_id
+  - table: cargos
+    where: isdeleted = 1 and creationtime < '2022-1-1'
+    pk: id
+    deps:
+      - table: cargo_packs
+        key: cargoid
+        pk: id
+        deps:
+          - table: cargo_pack_barcode
+            pk: id
+            key: cargopack_id
