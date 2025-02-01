@@ -8,10 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	__CFG_FILE__ = "config.yaml"
-)
-
 type Datasource struct {
 	Addr   string
 	User   string
@@ -33,18 +29,18 @@ type Config struct {
 	Global struct {
 		Batch_size int
 		Sleep      time.Duration
-	}
-	Datasource struct {
-		Transaction_isolation string
-		Src                   Datasource
-		Dst                   Datasource
+		Datasource struct {
+			Transaction_isolation string
+			Src                   Datasource
+			Dst                   Datasource
+		}
 	}
 	Rules []TableRule
 }
 
-func LoadConfig() (*Config, error) {
+func LoadConfig(cfgPath string) (*Config, error) {
 
-	cfgbuf, err := os.ReadFile(__CFG_FILE__)
+	cfgbuf, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +62,9 @@ func ValidConfig(cfg *Config) error {
 	)
 
 	/* 校验事务隔离级别设置 */
-	switch cfg.Datasource.Transaction_isolation {
+	switch cfg.Global.Datasource.Transaction_isolation {
 	case "READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE":
+		break
 	default:
 		return ERR_DS_TRANSACTION_ISOLATION_NOTSUPPORT
 	}

@@ -12,10 +12,10 @@ func InitDataSource(cfg *config.Config) (src, dst *sql.DB, err error) {
 
 	src, err = sql.Open("mysql", (&mysql.Config{
 		Net:                  "tcp",
-		Addr:                 cfg.Datasource.Src.Addr,
-		User:                 cfg.Datasource.Src.User,
-		Passwd:               cfg.Datasource.Src.Pass,
-		DBName:               cfg.Datasource.Src.Dbname,
+		Addr:                 cfg.Global.Datasource.Src.Addr,
+		User:                 cfg.Global.Datasource.Src.User,
+		Passwd:               cfg.Global.Datasource.Src.Pass,
+		DBName:               cfg.Global.Datasource.Src.Dbname,
 		AllowNativePasswords: true,
 		ParseTime:            true,
 		Timeout:              time.Second * 3,
@@ -34,10 +34,10 @@ func InitDataSource(cfg *config.Config) (src, dst *sql.DB, err error) {
 
 	dst, err = sql.Open("mysql", (&mysql.Config{
 		Net:                  "tcp",
-		Addr:                 cfg.Datasource.Dst.Addr,
-		User:                 cfg.Datasource.Dst.User,
-		Passwd:               cfg.Datasource.Dst.Pass,
-		DBName:               cfg.Datasource.Dst.Dbname,
+		Addr:                 cfg.Global.Datasource.Dst.Addr,
+		User:                 cfg.Global.Datasource.Dst.User,
+		Passwd:               cfg.Global.Datasource.Dst.Pass,
+		DBName:               cfg.Global.Datasource.Dst.Dbname,
 		AllowNativePasswords: true,
 		AllowAllFiles:        true,
 		Timeout:              time.Second * 3,

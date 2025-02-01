@@ -1,14 +1,22 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"mysql-archiver/config"
 	"mysql-archiver/database"
 )
 
+var (
+	cfgPath string
+)
+
 func main() {
 
-	app_cfg, err := config.LoadConfig()
+	flag.StringVar(&cfgPath, "c", "config.yaml", "special config file")
+	flag.Parse()
+
+	app_cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		log.Println("加载配置失败!", err)
 		return
