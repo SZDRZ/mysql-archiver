@@ -1,5 +1,5 @@
 global:
-  batch_size: 1
+  batch_size: 100
   sleep: 1s
   datasource:
     transaction_isolation: REPEATABLE READ
@@ -7,18 +7,31 @@ global:
       addr: 127.0.0.1:3306
       user: root
       pass: "1234"
-      dbname: ccc
+      dbname: test
     dst:
-      addr: 10.1.154.36:3306
+      addr: 192.168.66.3:3306
       user: root
-      pass: "1234"
-      dbname: ccc_archive
+      pass: "123456"
+      dbname: aaa
 rules:
-  - table: Orders
-    where: 1=1
-    pk: Id
-    batch_size: 5
+  # - table: OrderDetails
+  #   where: 1=1
+  #   pk: DetailId
+  # - table: Orders
+  #   where: 1=1
+  #   pk: Id
+  #   deps:
+  #     - table: OrderDetails
+  #       pk: DetailId
+  #       key: OrderId
+  - table: products
+    where: 1 = 1
+    pk: product_id
     deps:
-      - table: OrderDetails
-        pk: DetailId
-        key: OrderId
+      - table: product_packages
+        pk: package_id
+        key: product_id
+        deps:
+          - table: package_barcodes
+            pk: barcode_id
+            key: package_id

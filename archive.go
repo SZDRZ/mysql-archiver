@@ -8,7 +8,9 @@ import (
 	"io"
 	"log"
 	"mysql-archiver/config"
+	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -47,6 +49,22 @@ func escape(in *string) (out *string) {
 	s := t.String()
 
 	return &s
+}
+
+func sqlfmt(sql_template string, data interface{}) string {
+	tpl := template.New("default")
+	_, err := tpl.Parse(sql_template)
+	if err != nil {
+		log.Println("[ERROR] sql template parse failed:", err)
+		return ""
+	}
+	sb := &strings.Builder{}
+	tpl.Execute(sb, data)
+	s := sb.String()
+
+	log.Println("[DEBUG] QUERY:", s)
+
+	return s
 }
 
 func QueryToTSV(queryResult *sql.Rows) *bytes.Buffer {
@@ -147,26 +165,44 @@ func QueryToTSV(queryResult *sql.Rows) *bytes.Buffer {
 
 }
 
-func DepsHandler(tr *config.TableRule, dsSrc, dsDst *sql.DB) error {
+func DepsHandler(global_cfg *config.Config, tr *config.TableRule, dsSrc, dsDst *sql.DB) error {
 
-	sql := fmt.Sprintf("create temporary table tmp_%s as select %s from %s limit 0", tr.Table, tr.Pk, tr.Table)
-	log.Println("[DEBUG] QUERY:", sql)
-	_, err := dsSrc.Exec(sql)
+	// sql := fmt.Sprintf("create temporary table tmp_%s as select %s from %s limit 0", tr.Table, tr.Pk, tr.Table)
+	// log.Println("[DEBUG] QUERY:", sql)
+
+	_, err := dsSrc.Exec(sqlfmt(
+		"create temporary table tmp_{{.Table}} as select {{.Pk}} from {{.Table}} limit 0",
+		map[string]string{
+			"Table": tr.Table,
+			"Pk":    tr.Pk,
+		},
+	))
 	if err != nil {
 		return err
 	}
 
 	defer func() {
-		sql := `drop temporary table if exists tmp_` + tr.Table
-		log.Println("[DEBUG] QUERY:", sql)
-		dsSrc.Exec(sql)
+		dsSrc.Exec(sqlfmt(
+			`drop temporary table if exists tmp_{{.Table}}`,
+			map[string]string{
+				"Table": tr.Table,
+			},
+		))
 	}()
 
 	for {
 
 		if tr.Previous == nil {
-			sql := fmt.Sprintf("insert into tmp_%s select %s from %s where %s limit %d", tr.Table, tr.Pk, tr.Table, tr.Where, tr.Batch_size)
-			log.Println("[DEBUG] QUERY:", sql)
+
+			sql := sqlfmt(
+				"insert into tmp_{{.Table}} select {{.Pk}} from {{.Table}} where {{.Where}} limit {{.BatchSize}}",
+				map[string]string{
+					"Table":     tr.Table,
+					"Pk":        tr.Pk,
+					"Where":     tr.Where,
+					"BatchSize": strconv.Itoa(global_cfg.Global.Batch_size),
+				},
+			)
 			sqlResult, err := dsSrc.Exec(sql)
 			if err != nil {
 				log.Println("[ERROR] select primary table", tr.Table, "pk records error:", err)
@@ -178,9 +214,18 @@ func DepsHandler(tr *config.TableRule, dsSrc, dsDst *sql.DB) error {
 			if rowsAffect == 0 {
 				break
 			}
+
 		} else {
-			sql := fmt.Sprintf("insert into tmp_%s select %s from %s where %s in (table tmp_%s)", tr.Table, tr.Pk, tr.Table, tr.Key, tr.Previous.Table)
-			log.Println("[DEBUG] QUERY:", sql)
+
+			sql := sqlfmt(
+				"insert into tmp_{{.Table}} select {{.Pk}} from {{.Table}} where {{.Key}} in (table tmp_{{.PreviousTable}})",
+				map[string]string{
+					"Table":         tr.Table,
+					"Pk":            tr.Pk,
+					"Key":           tr.Key,
+					"PreviousTable": tr.Previous.Table,
+				},
+			)
 			sqlResult, err := dsSrc.Exec(sql)
 			if err != nil {
 				log.Println("[ERROR] select sub table", tr.Table, "pk records error:", err)
@@ -197,20 +242,27 @@ func DepsHandler(tr *config.TableRule, dsSrc, dsDst *sql.DB) error {
 		if len(tr.Deps) > 0 {
 			for _, rule := range tr.Deps {
 				rule.Previous = tr
-				if err := DepsHandler(&rule, dsSrc, dsSrc); err != nil {
+				if err := DepsHandler(global_cfg, &rule, dsSrc, dsDst); err != nil {
 					return err
 				}
 			}
 		}
 
-		sql := fmt.Sprintf("select * from %s where %s in (table tmp_%s)", tr.Table, tr.Pk, tr.Table)
-		log.Println("[DEBUG] QUERY:", sql)
+		/* 查匹配的全列数据 */
+		sql := sqlfmt(
+			"select * from {{.Table}} where {{.Pk}} in (table tmp_{{.Table}})",
+			map[string]string{
+				"Table": tr.Table,
+				"Pk":    tr.Pk,
+			},
+		)
 		queryResult, err := dsSrc.Query(sql)
 		if err != nil {
 			log.Println("table", tr.Table, "fetch data error:", err)
 			return err
 		}
 
+		/* 转换为TSV格式 */
 		buffer := QueryToTSV(queryResult)
 		if buffer == nil {
 			log.Println("table", tr.Table, "transform to tsv error!")
@@ -219,21 +271,43 @@ func DepsHandler(tr *config.TableRule, dsSrc, dsDst *sql.DB) error {
 
 		log.Println("buffer size:", buffer.Len())
 
+		/* 导入数据 */
 		mysql.RegisterReaderHandler("data", func() io.Reader {
 			return buffer
 		})
 
-		loadResult, err := dsDst.Exec(`load data local infile 'Reader::data' into table ` + tr.Table)
+		sql = sqlfmt(`load data local infile 'Reader::data' into table {{.Table}}`, map[string]string{
+			"Table": tr.Table,
+		})
+		loadResult, err := dsDst.Exec(sql)
 		if err != nil {
 			log.Println("table", tr.Table, "load data error:", err)
 			return err
 		}
 
 		loadedRows, _ := loadResult.RowsAffected()
+		if loadedRows == 0 {
+			log.Println("table", tr.Table, "load failed! number of rows equal zero.")
+
+			r, _ := dsDst.Query("show warnings")
+			for r.Next() {
+				var c1, c2, c3 string
+				r.Scan(&c1, &c2, &c3)
+				fmt.Println(c1, c2, c3)
+			}
+			r.Close()
+			return errors.New("LOAD_ZERO_ROWS")
+		}
 		log.Println("table", tr.Table, "success loaded", loadedRows, "rows")
 
-		sql = fmt.Sprintf(`delete from %s where %s in (table tmp_%s)`, tr.Table, tr.Pk, tr.Table)
-		log.Println("[DEBUG] QUERY:", sql)
+		/* 删除源数据 */
+		sql = sqlfmt(
+			`delete from {{.Table}} where {{.Pk}} in (table tmp_{{.Table}})`,
+			map[string]string{
+				"Table": tr.Table,
+				"Pk":    tr.Pk,
+			},
+		)
 		sqlResult, err := dsSrc.Exec(sql)
 		if err != nil {
 			log.Println("table", tr.Table, "delete origin data error:", err)
@@ -243,11 +317,16 @@ func DepsHandler(tr *config.TableRule, dsSrc, dsDst *sql.DB) error {
 		deletedRows, _ := sqlResult.RowsAffected()
 		log.Println("table", tr.Table, "has been deleted", deletedRows, "rows")
 
-		sql = `truncate table tmp_` + tr.Table
-		log.Println("[DEBUG] QUERY:", sql)
+		/* 清空临时表 */
+		sql = sqlfmt(
+			`truncate table tmp_{{.Table}}`,
+			map[string]string{
+				"Table": tr.Table,
+			},
+		)
 		dsSrc.Exec(sql)
 
-		time.Sleep(time.Second)
+		time.Sleep(global_cfg.Global.Sleep)
 	}
 
 	return nil
@@ -262,7 +341,7 @@ func Archive(cfg *config.Config, srcSqlHandler, dstSqlHandler *sql.DB) {
 	srcSqlHandler.Exec("SET @@SESSION.TRANSACTION_ISOLATION='" + cfg.Global.Datasource.Transaction_isolation + "'")
 
 	for _, rule := range cfg.Rules {
-		if err := DepsHandler(&rule, srcSqlHandler, dstSqlHandler); err != nil {
+		if err := DepsHandler(cfg, &rule, srcSqlHandler, dstSqlHandler); err != nil {
 			log.Println("[ERROR] table ", rule.Table, "archive failed! skipped...")
 			continue
 		}

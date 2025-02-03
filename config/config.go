@@ -16,13 +16,13 @@ type Datasource struct {
 }
 
 type TableRule struct {
-	Previous   *TableRule
-	Table      string
-	Where      string
-	Pk         string
-	Key        string
-	Batch_size int
-	Deps       []TableRule
+	Previous *TableRule
+	Table    string
+	Where    string
+	Pk       string
+	Key      string
+	// Batch_size int
+	Deps []TableRule
 }
 
 type Config struct {
