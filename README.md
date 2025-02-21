@@ -1,37 +1,24 @@
 # mysql-archiver
 
-#### 介绍
-这是一款适用于MySQL数据跨机跨库归档场景的工具。支持单表、多表关联归档。
+## 介绍
+这是一款适用于MySQL跨服务器归档场景的工具。能够实现把A实例的数据转移到B实例上。目前支持单表归档、多表联级归档，满足大多数归档需求。
+使用时您只需通过YAML定义好归档参数（如批次大小、归档间隔、事务隔离级别等）、归档规则即可。剩下的循环归档动作交由`mysql-archiver`去执行~
 
-#### 软件架构
-软件架构说明
+### !!! For release DBA hands. !!!
 
+![](docs/image1.png)
 
-#### 安装教程
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 使用说明
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+![](docs/image2.png)
 
 
-#### 特技
+## 软件架构
+coding...
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+
+## 安装教程
+todo...
+
+## 使用说明
+todo...
+
+
