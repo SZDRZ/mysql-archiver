@@ -17,7 +17,6 @@ func InitDataSource(cfg *config.Config) (src, dst *sql.DB, err error) {
 		Passwd:               cfg.Global.Datasource.Src.Pass,
 		DBName:               cfg.Global.Datasource.Src.Dbname,
 		AllowNativePasswords: true,
-		ParseTime:            true,
 		Timeout:              time.Second * 3,
 	}).FormatDSN())
 
