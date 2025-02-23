@@ -3,53 +3,50 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
 	"log"
 	"mysql-archiver/config"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 const (
-	FIELD_SPLIT_CHAR       = '\t'
-	LINE_SPLIT_CHAR        = '\n'
-	ESCAPE_CHAR            = '\\'
-	MYSQL_DATETIME6_FORMAT = time.DateTime + ".000000"
+	FIELD_SPLIT_CHAR = ','
+	LINE_SPLIT_CHAR  = '\n'
+	// ESCAPE_CHAR            = '\\'
+	// MYSQL_DATETIME6_FORMAT = time.DateTime + ".000000"
 )
 
-var (
-	ESCAPE_CHARS = map[rune]struct{}{
-		LINE_SPLIT_CHAR:  {}, // \n
-		FIELD_SPLIT_CHAR: {}, // \t
-		0x0D:             {}, // \r
-		0x08:             {}, // \b
-		0x00:             {}, // \0
-		0x1A:             {}, // \Z
-		ESCAPE_CHAR:      {}, // '\'
-	}
-)
+// var (
+// 	ESCAPE_CHARS = map[rune]struct{}{
+// 		LINE_SPLIT_CHAR:  {}, // \n
+// 		FIELD_SPLIT_CHAR: {}, // \t
+// 		0x0D:             {}, // \r
+// 		0x08:             {}, // \b
+// 		0x00:             {}, // \0
+// 		0x1A:             {}, // \Z
+// 		ESCAPE_CHAR:      {}, // '\'
+// 	}
+// )
 
-func escape(in *string) (out *string) {
+// func escape(in *string) (out *string) {
 
-	t := strings.Builder{}
+// 	t := strings.Builder{}
 
-	for _, c := range *in {
-		if _, exists := ESCAPE_CHARS[c]; exists {
-			t.WriteByte(ESCAPE_CHAR)
-		}
-		t.WriteRune(c)
-	}
+// 	for _, c := range *in {
+// 		if _, exists := ESCAPE_CHARS[c]; exists {
+// 			t.WriteByte(ESCAPE_CHAR)
+// 		}
+// 		t.WriteRune(c)
+// 	}
 
-	s := t.String()
+// 	s := t.String()
 
-	return &s
-}
+// 	return &s
+// }
 
 func sqlfmt(sql_template string, data interface{}) string {
 	tpl := template.New("default")
@@ -67,7 +64,22 @@ func sqlfmt(sql_template string, data interface{}) string {
 	return s
 }
 
-func QueryToTSV(queryResult *sql.Rows) *bytes.Buffer {
+/*
+input: []byte(xxx)
+output: x'A1B2C3'
+*/
+func encodeToHex(b []byte) string {
+	s := strings.Builder{}
+	s.WriteString("x'")
+	s.WriteString(hex.EncodeToString(b))
+	s.WriteString("'")
+	return s.String()
+}
+
+/*
+output: (...),(...),(...)
+*/
+func QueryToInsertInto(queryResult *sql.Rows) []byte {
 
 	defer queryResult.Close()
 
@@ -76,30 +88,27 @@ func QueryToTSV(queryResult *sql.Rows) *bytes.Buffer {
 	for i, columnType := range columnTypes {
 		switch typeName := columnType.DatabaseTypeName(); typeName {
 		case
-			"TINYINT", "UNSIGNED TINYINT", "SMALLINT", "UNSIGNED SMALLINT", "MEDIUMINT", "UNSIGNED MEDIUMINT", "INT", "UNSIGNED INT", "BIGINT", "UNSIGNED BIGINT",
-			"DECIMAL", "DOUBLE", "FLOAT",
-			"CHAR", "VARCHAR", "TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT",
-			"JSON", "BIT":
-			canbeNull, _ := columnType.Nullable()
-			if canbeNull {
-				resultScanList[i] = new(sql.NullString)
-			} else {
-				resultScanList[i] = new(string)
-			}
-		case "DATETIME", "DATE", "TIMESTAMP":
-			canbeNull, _ := columnType.Nullable()
-			if canbeNull {
-				resultScanList[i] = new(sql.NullTime)
-			} else {
-				resultScanList[i] = new(time.Time)
-			}
+			"TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT",
+			"UNSIGNED TINYINT", "UNSIGNED SMALLINT", "UNSIGNED MEDIUMINT", "UNSIGNED INT", "UNSIGNED BIGINT",
+			"DECIMAL", "DOUBLE", "FLOAT":
+
+			resultScanList[i] = new(sql.NullString)
+		case
+			"CHAR", "VARCHAR",
+			"TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT",
+			"TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB",
+			"JSON", "BIT",
+			"TIME", "DATE", "YEAR", "DATETIME", "TIMESTAMP":
+
+			resultScanList[i] = new(sql.RawBytes)
 		default:
 			log.Printf("column:%s type:%s is not support yet!\n", columnType.Name(), typeName)
 			return nil
 		}
 	}
 
-	dataBuffer := bytes.NewBuffer(nil)
+	tmpBuffer := bytes.NewBuffer(nil)
+	// tmpBuffer.WriteString("INSERT INTO `" + table + "` VALUES ")
 
 	for queryResult.Next() {
 		err := queryResult.Scan(resultScanList...)
@@ -108,60 +117,48 @@ func QueryToTSV(queryResult *sql.Rows) *bytes.Buffer {
 			return nil
 		}
 
+		tmpBuffer.WriteByte('(')
+
 		for i, colPointer := range resultScanList {
 			switch val := colPointer.(type) {
-			case *string:
-				_, err := dataBuffer.WriteString(*escape(val))
-				if err != nil {
-					log.Println("write buffer error:", err)
-					return nil
-				}
+
 			case *sql.NullString:
 				if val.Valid {
-					_, err := dataBuffer.WriteString(*escape(&val.String))
+
+					_, err := tmpBuffer.WriteString(val.String)
 					if err != nil {
 						log.Println("write buffer error:", err)
 						return nil
 					}
+
 				} else {
-					_, err := dataBuffer.WriteString("\\N")
+					_, err := tmpBuffer.WriteString("NULL")
 					if err != nil {
 						log.Println("write buffer error:", err)
 						return nil
 					}
 				}
-			case *time.Time:
-				_, err := dataBuffer.WriteString(val.Format(MYSQL_DATETIME6_FORMAT))
-				if err != nil {
-					log.Println("write buffer error:", err)
-					return nil
-				}
-			case *sql.NullTime:
-				if val.Valid {
-					_, err := dataBuffer.WriteString(val.Time.Format(MYSQL_DATETIME6_FORMAT))
-					if err != nil {
-						log.Println("write buffer error:", err)
-						return nil
-					}
+			case *sql.RawBytes:
+				if len(*val) == 0 {
+					tmpBuffer.WriteString("NULL")
 				} else {
-					_, err := dataBuffer.WriteString("\\N")
-					if err != nil {
-						log.Println("write buffer error:", err)
-						return nil
-					}
+					tmpBuffer.WriteString(encodeToHex(*val))
 				}
+
 			}
 
 			// 最后一列不需要加 列分隔符
 			if i < len(resultScanList)-1 {
-				dataBuffer.WriteByte(FIELD_SPLIT_CHAR)
+				tmpBuffer.WriteByte(FIELD_SPLIT_CHAR)
 			}
+
 		}
 
-		dataBuffer.WriteByte(LINE_SPLIT_CHAR)
+		tmpBuffer.WriteString("),")
+
 	}
 
-	return dataBuffer
+	return tmpBuffer.Bytes()[:tmpBuffer.Len()-1]
 
 }
 
@@ -192,7 +189,7 @@ func DepsHandler(global_cfg *config.Config, tr *config.TableRule, dsSrc, dsDst *
 
 	for {
 
-		if tr.Previous == nil {
+		if tr.Previous == nil { /* 父节点处理 */
 
 			sql := sqlfmt(
 				"insert into tmp_{{.Table}} select {{.Pk}} from {{.Table}} where {{.Where}} limit {{.BatchSize}}",
@@ -215,7 +212,7 @@ func DepsHandler(global_cfg *config.Config, tr *config.TableRule, dsSrc, dsDst *
 				break
 			}
 
-		} else {
+		} else { /* 子节点处理 */
 
 			sql := sqlfmt(
 				"insert into tmp_{{.Table}} select {{.Pk}} from {{.Table}} where {{.Key}} in (table tmp_{{.PreviousTable}})",
@@ -262,43 +259,25 @@ func DepsHandler(global_cfg *config.Config, tr *config.TableRule, dsSrc, dsDst *
 			return err
 		}
 
-		/* 转换为TSV格式 */
-		buffer := QueryToTSV(queryResult)
-		if buffer == nil {
-			log.Println("table", tr.Table, "transform to tsv error!")
-			return errors.New("transform tsv error")
+		/* 拼接成INSERT语句导入 */
+		insertbuf := QueryToInsertInto(queryResult)
+		if insertbuf == nil {
+			log.Println("table", tr.Table, "transform to insert sql error!")
+			return errors.New("transform to insert sql error")
 		}
+		sqlbuf := bytes.NewBuffer(nil)
+		sqlbuf.WriteString("INSERT INTO `" + tr.Table + "` VALUES ")
+		sqlbuf.Write(insertbuf)
 
-		log.Println("buffer size:", buffer.Len())
+		log.Println("insert sql buf size:", sqlbuf.Len())
 
-		/* 导入数据 */
-		mysql.RegisterReaderHandler("data", func() io.Reader {
-			return buffer
-		})
-
-		sql = sqlfmt(`load data local infile 'Reader::data' into table {{.Table}}`, map[string]string{
-			"Table": tr.Table,
-		})
-		loadResult, err := dsDst.Exec(sql)
+		loadResult, err := dsDst.Exec(sqlbuf.String())
 		if err != nil {
 			log.Println("table", tr.Table, "load data error:", err)
 			return err
 		}
-
-		loadedRows, _ := loadResult.RowsAffected()
-		if loadedRows == 0 {
-			log.Println("table", tr.Table, "load failed! number of rows equal zero.")
-
-			r, _ := dsDst.Query("show warnings")
-			for r.Next() {
-				var c1, c2, c3 string
-				r.Scan(&c1, &c2, &c3)
-				fmt.Println(c1, c2, c3)
-			}
-			r.Close()
-			return errors.New("LOAD_ZERO_ROWS")
-		}
-		log.Println("table", tr.Table, "success loaded", loadedRows, "rows")
+		loadRows, _ := loadResult.RowsAffected()
+		log.Println("table", tr.Table, "success loaded", loadRows, "rows")
 
 		/* 删除源数据 */
 		sql = sqlfmt(
